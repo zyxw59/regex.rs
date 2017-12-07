@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use super::ast;
     use super::program;
 
     #[test]
-    fn it_works() {
+    fn program() {
         use program::Instr::*;
         // /(ab?)(b?c)\b/
         let prog = vec![
@@ -51,7 +52,36 @@ mod tests {
                    vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
                    ]);
     }
+
+    #[test]
+    fn ast() {
+        use ast::Regex::*;
+        // /(ab?)(b?c)a\b/
+        let tree = Concat(vec![
+            Capture(Box::new(Concat(vec![
+                Literal(vec!['a']),
+                Repeat(
+                    Box::new(Literal(vec!['b'])),
+                    ast::Repeater::ZeroOrOne(true)),
+            ]))),
+            Capture(Box::new(Concat(vec![
+                Repeat(
+                    Box::new(Literal(vec!['b'])),
+                    ast::Repeater::ZeroOrOne(true)),
+                Literal(vec!['c']),
+            ]))),
+            WordBoundary,
+        ]);
+        let prog = tree.compile();
+        let saves = prog.exec("ducabc ".chars());
+        assert_eq!(saves,
+                   vec![
+                   vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
+                   vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
+                   ]);
+    }
 }
 
+pub mod ast;
 pub mod program;
 pub mod token;
