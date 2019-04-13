@@ -5,7 +5,7 @@ mod tests {
 
     #[test]
     fn program() {
-        use program::Instr::*;
+        use crate::program::Instr::*;
         // /(ab?)(b?c)\b/
         let prog = vec![
             // 0: *? quantifier
@@ -46,39 +46,39 @@ mod tests {
         let num_slots = 6;
         let program = program::Program::new(prog, num_slots);
         let saves = program.exec("ducabc ".chars());
-        assert_eq!(saves,
-                   vec![
-                   vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
-                   vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
-                   ]);
+        assert_eq!(
+            saves,
+            vec![
+                vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
+                vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
+            ]
+        );
     }
 
     #[test]
     fn ast() {
-        use ast::Regex::*;
+        use crate::ast::Regex::*;
         // /(ab?)(b?c)a\b/
         let tree = Concat(vec![
             Capture(Box::new(Concat(vec![
                 Literal(vec!['a']),
-                Repeat(
-                    Box::new(Literal(vec!['b'])),
-                    ast::Repeater::ZeroOrOne(true)),
+                Repeat(Box::new(Literal(vec!['b'])), ast::Repeater::ZeroOrOne(true)),
             ]))),
             Capture(Box::new(Concat(vec![
-                Repeat(
-                    Box::new(Literal(vec!['b'])),
-                    ast::Repeater::ZeroOrOne(true)),
+                Repeat(Box::new(Literal(vec!['b'])), ast::Repeater::ZeroOrOne(true)),
                 Literal(vec!['c']),
             ]))),
             WordBoundary,
         ]);
         let prog = tree.compile();
         let saves = prog.exec("ducabc ".chars());
-        assert_eq!(saves,
-                   vec![
-                   vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
-                   vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
-                   ]);
+        assert_eq!(
+            saves,
+            vec![
+                vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
+                vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
+            ]
+        );
     }
 }
 
