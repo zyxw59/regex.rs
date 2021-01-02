@@ -8,7 +8,7 @@ use crate::token::Token;
 pub type InstrPtr = usize;
 
 /// A single instruction
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Instr<T: Token> {
     /// Matches a single token.
     Token(T),
@@ -132,6 +132,7 @@ impl<'a> IntoIterator for &'a mut ThreadList {
 pub type SaveList = Vec<Option<usize>>;
 
 /// A program for the VM
+#[derive(Debug, PartialEq)]
 pub struct Program<T: Token> {
     /// List of instructions. `InstrPtr`s are indexed into this vector
     prog: Vec<Instr<T>>,
