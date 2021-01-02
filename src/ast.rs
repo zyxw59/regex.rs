@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::program;
 use crate::state::SaveList;
 use crate::token::Token;
@@ -16,7 +14,7 @@ pub enum Regex<T: Token> {
     /// Matches a word boundary.
     WordBoundary,
     /// Matches a single token from a set of tokens.
-    Set(HashSet<T>),
+    Set(T::Set),
     /// Matches a repeating pattern
     Repeat(Box<Regex<T>>, Repeater),
     /// Generates a capturing group

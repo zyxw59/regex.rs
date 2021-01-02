@@ -1,5 +1,4 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::mem;
 use std::ops::Index;
@@ -8,13 +7,12 @@ use indexmap::IndexSet;
 
 use crate::searcher::{IntoSearcher, Searcher};
 use crate::state::{ProgramState, State};
-use crate::token::Token;
+use crate::token::{Token, TokenMap, TokenSet};
 
 /// Type for indexing into a program
 pub type InstrPtr = usize;
 
 /// A single instruction
-#[derive(Debug, PartialEq)]
 pub enum Instr<T: Token, U> {
     /// Matches a single token.
     Token(T),
@@ -22,9 +20,9 @@ pub enum Instr<T: Token, U> {
     Any,
     /// Maps input tokens to new `InstrPtr`s. If the input token is not found, falls through to the
     /// next instruction.
-    Map(HashMap<T, InstrPtr>),
+    Map(T::Map),
     /// Matches a single token from a set of tokens.
-    Set(HashSet<T>),
+    Set(T::Set),
     /// Matches a word boundary.
     WordBoundary,
     /// Splits into two states, preferring not to jump. Used to implement alternations and
@@ -47,49 +45,52 @@ pub enum Instr<T: Token, U> {
     Match,
 }
 
-// #[cfg(test)]
-// impl<T, U> PartialEq for Instr<T, U>
-// where
-//     T: Token,
-//     U: PartialEq,
-// {
-//     fn eq(&self, other: &Self) -> bool {
-//         use self::Instr::*;
-//         match (self, other) {
-//             (Any, Any) | (WordBoundary, WordBoundary) | (Reject, Reject) | (Match, Match) => true,
-//             (Map(s), Map(o)) => s == o,
-//             (Set(s), Set(o)) => s == o,
-//             (Token(s), Token(o)) => s == o,
-//             (Split(s), Split(o)) | (JSplit(s), JSplit(o)) | (Jump(s), Jump(o)) => s == o,
-//             (UpdateState(s), UpdateState(o)) => s == o,
-//             _ => false,
-//         }
-//     }
-// }
+#[cfg(test)]
+impl<T, U> PartialEq for Instr<T, U>
+where
+    T: Token,
+    T::Map: PartialEq,
+    T::Set: PartialEq,
+    U: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        use self::Instr::*;
+        match (self, other) {
+            (Any, Any) | (WordBoundary, WordBoundary) | (Reject, Reject) | (Match, Match) => true,
+            (Map(s), Map(o)) => s == o,
+            (Set(s), Set(o)) => s == o,
+            (Token(s), Token(o)) => s == o,
+            (Split(s), Split(o)) | (JSplit(s), JSplit(o)) | (Jump(s), Jump(o)) => s == o,
+            (UpdateState(s), UpdateState(o)) => s == o,
+            _ => false,
+        }
+    }
+}
 
-// impl<T, S> Debug for Instr<T, S>
-// where
-//     T: Token,
-//     S: State<T>,
-//     S::Update: Debug,
-// {
-//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-//         use self::Instr::*;
-//         match self {
-//             Token(t) => write!(f, "Token({:?})", t),
-//             Any => write!(f, "Any"),
-//             Map(map) => write!(f, "Map({:?})", map),
-//             Set(set) => write!(f, "Set({:?})", set),
-//             WordBoundary => write!(f, "WordBoundary"),
-//             Split(ip) => write!(f, "Split({:?})", ip),
-//             JSplit(ip) => write!(f, "JSplit({:?})", ip),
-//             Jump(ip) => write!(f, "Jump({:?})", ip),
-//             UpdateState(update) => write!(f, "UpdateState({:?})", update),
-//             Reject => write!(f, "Reject"),
-//             Match => write!(f, "Match"),
-//         }
-//     }
-// }
+impl<T, U> Debug for Instr<T, U>
+where
+    T: Token,
+    T::Map: Debug,
+    T::Set: Debug,
+    U: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use self::Instr::*;
+        match self {
+            Token(t) => write!(f, "Token({:?})", t),
+            Any => write!(f, "Any"),
+            Map(map) => write!(f, "Map({:?})", map),
+            Set(set) => write!(f, "Set({:?})", set),
+            WordBoundary => write!(f, "WordBoundary"),
+            Split(ip) => write!(f, "Split({:?})", ip),
+            JSplit(ip) => write!(f, "JSplit({:?})", ip),
+            Jump(ip) => write!(f, "Jump({:?})", ip),
+            UpdateState(update) => write!(f, "UpdateState({:?})", update),
+            Reject => write!(f, "Reject"),
+            Match => write!(f, "Match"),
+        }
+    }
+}
 
 /// A thread, consisting of an `InstrPtr` to the current instruction, and any
 /// state used by the engine.
@@ -278,7 +279,7 @@ impl<T: Token, S: State<T>> Program<T, S> {
                     Map(ref map) => {
                         // get the corresponding pc, or default to incrementing
                         next.add_thread(
-                            next_program_state.optional_with_ip(map.get(tok_i).cloned()),
+                            next_program_state.optional_with_ip(map.get(tok_i)),
                             self,
                             th.state,
                         );
@@ -370,6 +371,8 @@ impl<T: Token, S: State<T>> Index<InstrPtr> for Program<T, S> {
 impl<T, S> PartialEq for Program<T, S>
 where
     T: Token,
+    T::Map: PartialEq,
+    T::Set: PartialEq,
     S: State<T>,
     S::Update: PartialEq,
     S::Init: PartialEq,
@@ -382,6 +385,8 @@ where
 impl<T, S> Debug for Program<T, S>
 where
     T: Token,
+    T::Map: Debug,
+    T::Set: Debug,
     S: State<T>,
     S::Update: Debug,
     S::Init: Debug,
