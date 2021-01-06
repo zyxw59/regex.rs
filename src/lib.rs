@@ -19,7 +19,7 @@ mod tests {
 
     #[test]
     fn program() {
-        let program = super::program![<char, SaveList>
+        let program = super::program![<_, SaveList>
             // /(ab?)(b?c)\b/
             // match .*? before start of match
             :l0 JSplit(l1),
@@ -47,7 +47,7 @@ mod tests {
             // end of match
             UpdateState(1),
             Match,
-            ; 6
+            ; 6 // number of save slots
         ];
         let haystack = "ducabc";
         let saves = program.exec(haystack);

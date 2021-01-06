@@ -12,7 +12,8 @@ use crate::token::Token;
 pub type InstrPtr = usize;
 
 /// A single instruction
-pub enum Instr<T: Token, S: State<T>> {
+#[derive(Debug, PartialEq)]
+pub enum Instr<T: Token, U> {
     /// Matches a single token.
     Token(T),
     /// Matches any token.
@@ -37,57 +38,56 @@ pub enum Instr<T: Token, S: State<T>> {
     /// indicated save slot. This is used for subgroup matching. In general,
     /// save the start of the <i>n</i>th capturing group to slot _2n_, and the
     /// end to slot _2n + 1_.
-    UpdateState(S::Update),
+    UpdateState(U),
     /// Reject a potential match. Can be used after a Map when fallthrough should fail.
     Reject,
     /// The end of a match.
     Match,
 }
 
-#[cfg(test)]
-impl<T, S> PartialEq for Instr<T, S>
-where
-    T: Token,
-    S: State<T>,
-    S::Update: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        use self::Instr::*;
-        match (self, other) {
-            (Any, Any) | (WordBoundary, WordBoundary) | (Reject, Reject) | (Match, Match) => true,
-            (Map(s), Map(o)) => s == o,
-            (Set(s), Set(o)) => s == o,
-            (Token(s), Token(o)) => s == o,
-            (Split(s), Split(o)) | (JSplit(s), JSplit(o)) | (Jump(s), Jump(o)) => s == o,
-            (UpdateState(s), UpdateState(o)) => s == o,
-            _ => false,
-        }
-    }
-}
+// #[cfg(test)]
+// impl<T, U> PartialEq for Instr<T, U>
+// where
+//     T: Token,
+//     U: PartialEq,
+// {
+//     fn eq(&self, other: &Self) -> bool {
+//         use self::Instr::*;
+//         match (self, other) {
+//             (Any, Any) | (WordBoundary, WordBoundary) | (Reject, Reject) | (Match, Match) => true,
+//             (Map(s), Map(o)) => s == o,
+//             (Set(s), Set(o)) => s == o,
+//             (Token(s), Token(o)) => s == o,
+//             (Split(s), Split(o)) | (JSplit(s), JSplit(o)) | (Jump(s), Jump(o)) => s == o,
+//             (UpdateState(s), UpdateState(o)) => s == o,
+//             _ => false,
+//         }
+//     }
+// }
 
-impl<T, S> Debug for Instr<T, S>
-where
-    T: Token,
-    S: State<T>,
-    S::Update: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        use self::Instr::*;
-        match self {
-            Token(t) => write!(f, "Token({:?})", t),
-            Any => write!(f, "Any"),
-            Map(map) => write!(f, "Map({:?})", map),
-            Set(set) => write!(f, "Set({:?})", set),
-            WordBoundary => write!(f, "WordBoundary"),
-            Split(ip) => write!(f, "Split({:?})", ip),
-            JSplit(ip) => write!(f, "JSplit({:?})", ip),
-            Jump(ip) => write!(f, "Jump({:?})", ip),
-            UpdateState(update) => write!(f, "UpdateState({:?})", update),
-            Reject => write!(f, "Reject"),
-            Match => write!(f, "Match"),
-        }
-    }
-}
+// impl<T, S> Debug for Instr<T, S>
+// where
+//     T: Token,
+//     S: State<T>,
+//     S::Update: Debug,
+// {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         use self::Instr::*;
+//         match self {
+//             Token(t) => write!(f, "Token({:?})", t),
+//             Any => write!(f, "Any"),
+//             Map(map) => write!(f, "Map({:?})", map),
+//             Set(set) => write!(f, "Set({:?})", set),
+//             WordBoundary => write!(f, "WordBoundary"),
+//             Split(ip) => write!(f, "Split({:?})", ip),
+//             JSplit(ip) => write!(f, "JSplit({:?})", ip),
+//             Jump(ip) => write!(f, "Jump({:?})", ip),
+//             UpdateState(update) => write!(f, "UpdateState({:?})", update),
+//             Reject => write!(f, "Reject"),
+//             Match => write!(f, "Match"),
+//         }
+//     }
+// }
 
 /// A thread, consisting of an `InstrPtr` to the current instruction, and any
 /// state used by the engine.
@@ -183,13 +183,13 @@ impl<'a, S> IntoIterator for &'a mut ThreadList<S> {
 /// A program for the VM
 pub struct Program<T: Token, S: State<T>> {
     /// List of instructions. `InstrPtr`s are indexed into this vector
-    prog: Vec<Instr<T, S>>,
+    prog: Vec<Instr<T, S::Update>>,
     /// Initializer for state.
     state_init: S::Init,
 }
 
 impl<T: Token, S: State<T>> Program<T, S> {
-    pub fn new(prog: Vec<Instr<T, S>>, state_init: S::Init) -> Program<T, S> {
+    pub fn new(prog: Vec<Instr<T, S::Update>>, state_init: S::Init) -> Program<T, S> {
         Program { prog, state_init }
     }
 
@@ -356,9 +356,9 @@ impl<T: Token, S: State<T>> Program<T, S> {
 }
 
 impl<T: Token, S: State<T>> Index<InstrPtr> for Program<T, S> {
-    type Output = Instr<T, S>;
+    type Output = Instr<T, S::Update>;
 
-    fn index(&self, idx: InstrPtr) -> &Instr<T, S> {
+    fn index(&self, idx: InstrPtr) -> &Instr<T, S::Update> {
         self.prog.index(idx)
     }
 }

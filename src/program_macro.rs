@@ -9,12 +9,12 @@ macro_rules! program {
             $(let $label = count;)?
             count += 1;
         )*
-        let mut prog = Vec::<$crate::program::Instr<$tok, $state>>::with_capacity(count);
+        let mut prog = Vec::with_capacity(count);
         $(
             let instr = $crate::instruction!($instr $(($($args)*))?);
             prog.push(instr);
         )*
-        $crate::program::Program::new(prog, {$($init)?})
+        $crate::program::Program::<$tok, $state>::new(prog, {$($init)?})
     }};
 }
 
@@ -41,7 +41,7 @@ macro_rules! instruction {
 fn program() {
     use crate::program::Instr::*;
 
-    let program_macro = program![<char, crate::state::SaveList>
+    let program_macro = program![<_, crate::state::SaveList>
         // /(ab?)(b?c)\b/
         // match .*? before start of match
         :l0 JSplit(l1),
@@ -69,7 +69,7 @@ fn program() {
         // end of match
         UpdateState(1),
         Match,
-        ; 6
+        ; 6 // number of save slots
     ];
 
     let prog = vec![

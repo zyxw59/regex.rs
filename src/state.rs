@@ -81,7 +81,7 @@ impl<T: Token> State<T> for SaveList {
 impl<T: Token> State<T> for () {
     type Update = ();
     type Init = ();
-    fn init(_: &()) -> () {}
+    fn init(_: &()) {}
     fn update<'a>(&mut self, _: &'a (), _: ProgramState<'a, T>) -> bool {
         true
     }

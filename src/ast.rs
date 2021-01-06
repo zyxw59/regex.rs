@@ -44,7 +44,7 @@ impl<T: Token> Regex<T> {
         program::Program::new(v, 2 + num_captures * 2)
     }
 
-    fn compile_partial(self, v: &mut Vec<program::Instr<T, SaveList>>, num_captures: &mut usize) {
+    fn compile_partial(self, v: &mut Vec<program::Instr<T, usize>>, num_captures: &mut usize) {
         use crate::program::Instr::*;
         match self {
             Regex::Empty => {}
