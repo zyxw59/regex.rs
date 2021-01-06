@@ -12,7 +12,7 @@ macro_rules! program {
             let instr = $crate::instruction!($instr $(($($args)*))?, max_slot);
             prog.push(instr);
         )*
-        $crate::program::Program::new(prog, max_slot + 1)
+        $crate::program::Program::<_, $crate::state::SaveList>::new(prog, max_slot + 1)
     }};
 }
 
@@ -24,9 +24,9 @@ macro_rules! instruction {
     (Set($($tok:expr),*), $max_slot:ident) => {
         $crate::program::Instr::Set([$($tok),*].into_iter().collect())
     };
-    (Save($slot:expr), $max_slot:ident) => {{
+    (UpdateState($slot:expr), $max_slot:ident) => {{
         $max_slot = $max_slot.max($slot);
-        $crate::program::Instr::Save($slot)
+        $crate::program::Instr::UpdateState($slot)
     }};
     // Any, WordBoundary, Reject, Match
     ($instr:tt, $max_slot:ident) => {
@@ -50,26 +50,26 @@ fn program() {
         Any,
         Jump(l0),
         // start of match
-        :l1 Save(0),
+        :l1 UpdateState(0),
         // start of first subgroup
-        Save(2),
+        UpdateState(2),
         Token('a'),
         // b?
         Split(l2),
         Token('b'),
         // end of first subgroup
-        :l2 Save(3),
+        :l2 UpdateState(3),
         // start of second subgroup
-        Save(4),
+        UpdateState(4),
         // b?
         Split(l3),
         Token('b'),
         :l3 Token('c'),
         // end of second subgroup
-        Save(5),
+        UpdateState(5),
         WordBoundary,
         // end of match
-        Save(1),
+        UpdateState(1),
         Match,
     ];
 
@@ -81,9 +81,9 @@ fn program() {
         // 2: repeat
         Jump(0),
         // 3: save start of match
-        Save(0),
+        UpdateState(0),
         // 4: save start of first subgroup
-        Save(2),
+        UpdateState(2),
         // 5: a
         Token('a'),
         // 6: optional b
@@ -91,9 +91,9 @@ fn program() {
         // 7: b
         Token('b'),
         // 8: save end of first subgroup
-        Save(3),
+        UpdateState(3),
         // 9: save start of second subgroup
-        Save(4),
+        UpdateState(4),
         // 10: optional b
         Split(12),
         // 11: b
@@ -101,11 +101,11 @@ fn program() {
         // 12: c
         Token('c'),
         // 13: save end of second subgroup
-        Save(5),
+        UpdateState(5),
         // 14: word boundary
         WordBoundary,
         // 15: save end of match
-        Save(1),
+        UpdateState(1),
         // 16: end of match
         Match,
     ];

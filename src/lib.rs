@@ -1,18 +1,19 @@
 #[cfg(test)]
 mod tests {
     use super::ast;
+    use super::state::SaveList;
 
     fn index_match<'a, H>(
         haystack: &'a H,
-        saves: &[crate::program::SaveList],
+        saves: &[SaveList],
         match_: usize,
         subgroup: usize,
     ) -> &'a H::Output
     where
         H: std::ops::Index<std::ops::Range<usize>> + ?Sized,
     {
-        let start = saves[match_][subgroup * 2].unwrap();
-        let end = saves[match_][subgroup * 2 + 1].unwrap();
+        let start = saves[match_].0[subgroup * 2].unwrap();
+        let end = saves[match_].0[subgroup * 2 + 1].unwrap();
         &haystack[start..end]
     }
 
@@ -25,26 +26,26 @@ mod tests {
             Any,
             Jump(l0),
             // start of match
-            :l1 Save(0),
+            :l1 UpdateState(0),
             // start of first subgroup
-            Save(2),
+            UpdateState(2),
             Token('a'),
             // b?
             Split(l2),
             Token('b'),
             // end of first subgroup
-            :l2 Save(3),
+            :l2 UpdateState(3),
             // start of second subgroup
-            Save(4),
+            UpdateState(4),
             // b?
             Split(l3),
             Token('b'),
             :l3 Token('c'),
             // end of second subgroup
-            Save(5),
+            UpdateState(5),
             WordBoundary,
             // end of match
-            Save(1),
+            UpdateState(1),
             Match,
         ];
         let haystack = "ducabc";
@@ -58,8 +59,8 @@ mod tests {
         assert_eq!(
             saves,
             vec![
-                vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
-                vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
+                SaveList(vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)]),
+                SaveList(vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)]),
             ]
         );
     }
@@ -73,21 +74,21 @@ mod tests {
             Any,
             Jump(l0),
             // start of match
-            :l1 Save(0),
+            :l1 UpdateState(0),
             // first subgroup
-            Save(2),
+            UpdateState(2),
             Any,
-            Save(3),
+            UpdateState(3),
             // second subgroup
-            Save(4),
+            UpdateState(4),
             Any,
-            Save(5),
+            UpdateState(5),
             // third subgroup
-            Save(6),
+            UpdateState(6),
             Any,
-            Save(7),
+            UpdateState(7),
             // end of match
-            Save(1),
+            UpdateState(1),
             Match,
         ];
         // the search string contains characters with 1, 2, 3, and 4 byte representations,
@@ -136,8 +137,8 @@ mod tests {
         assert_eq!(
             saves,
             vec![
-                vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)],
-                vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)],
+                SaveList(vec![Some(3), Some(6), Some(3), Some(5), Some(5), Some(6)]),
+                SaveList(vec![Some(3), Some(6), Some(3), Some(4), Some(4), Some(6)]),
             ]
         );
     }
@@ -147,4 +148,5 @@ pub mod ast;
 pub mod program;
 pub mod program_macro;
 pub mod searcher;
+pub mod state;
 pub mod token;

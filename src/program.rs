@@ -1,17 +1,18 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
 use std::mem;
 use std::ops::Index;
 
 use crate::searcher::{IntoSearcher, Searcher};
+use crate::state::{ProgramState, State};
 use crate::token::Token;
 
 /// Type for indexing into a program
 pub type InstrPtr = usize;
 
 /// A single instruction
-#[derive(Debug, PartialEq)]
-pub enum Instr<T: Token> {
+pub enum Instr<T: Token, S: State<T>> {
     /// Matches a single token.
     Token(T),
     /// Matches any token.
@@ -30,149 +31,207 @@ pub enum Instr<T: Token> {
     JSplit(InstrPtr),
     /// Jumps to a new point in the program.
     Jump(InstrPtr),
-    /// Saves the current index to the indicated save slot. Used for subgroup matching. In general,
-    /// save the start of the <i>n</i>th capturing group to slot _2n_, and the end to slot _2n +
-    /// 1_.
-    Save(usize),
+    /// Updates the thread state with the specified update arguments.
+    ///
+    /// For the `SaveList` state, this saves the current token index to the
+    /// indicated save slot. This is used for subgroup matching. In general,
+    /// save the start of the <i>n</i>th capturing group to slot _2n_, and the
+    /// end to slot _2n + 1_.
+    UpdateState(S::Update),
     /// Reject a potential match. Can be used after a Map when fallthrough should fail.
     Reject,
     /// The end of a match.
     Match,
 }
 
-/// A thread, consisting of an `InstrPtr` to the current instruction, and a vector of all saved
-/// positions
-#[derive(Debug)]
-struct Thread {
-    /// Pointer to current instruction
-    pc: InstrPtr,
-    /// Saved positions
-    saved: SaveList,
+#[cfg(test)]
+impl<T, S> PartialEq for Instr<T, S>
+where
+    T: Token,
+    S: State<T>,
+    S::Update: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        use self::Instr::*;
+        match (self, other) {
+            (Any, Any) | (WordBoundary, WordBoundary) | (Reject, Reject) | (Match, Match) => true,
+            (Map(s), Map(o)) => s == o,
+            (Set(s), Set(o)) => s == o,
+            (Token(s), Token(o)) => s == o,
+            (Split(s), Split(o)) | (JSplit(s), JSplit(o)) | (Jump(s), Jump(o)) => s == o,
+            (UpdateState(s), UpdateState(o)) => s == o,
+            _ => false,
+        }
+    }
 }
 
-impl Thread {
-    /// Create a new `Thread` with the specified instruction pointer and the given list of saved
-    /// locations.
-    fn new(pc: InstrPtr, saved: SaveList) -> Thread {
-        Thread { pc, saved }
+impl<T, S> Debug for Instr<T, S>
+where
+    T: Token,
+    S: State<T>,
+    S::Update: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use self::Instr::*;
+        match self {
+            Token(t) => write!(f, "Token({:?})", t),
+            Any => write!(f, "Any"),
+            Map(map) => write!(f, "Map({:?})", map),
+            Set(set) => write!(f, "Set({:?})", set),
+            WordBoundary => write!(f, "WordBoundary"),
+            Split(ip) => write!(f, "Split({:?})", ip),
+            JSplit(ip) => write!(f, "JSplit({:?})", ip),
+            Jump(ip) => write!(f, "Jump({:?})", ip),
+            UpdateState(update) => write!(f, "UpdateState({:?})", update),
+            Reject => write!(f, "Reject"),
+            Match => write!(f, "Match"),
+        }
+    }
+}
+
+/// A thread, consisting of an `InstrPtr` to the current instruction, and any
+/// state used by the engine.
+#[derive(Debug, Hash, Eq, PartialEq)]
+struct Thread<S> {
+    /// Pointer to current instruction
+    pc: InstrPtr,
+    /// Program state
+    state: S,
+}
+
+impl<S> Thread<S> {
+    /// Create a new `Thread` with the specified instruction pointer and the given state.
+    fn new(pc: InstrPtr, state: S) -> Thread<S> {
+        Thread { pc, state }
     }
 }
 
 /// A list of threads
 #[derive(Debug)]
-struct ThreadList {
-    threads: Vec<Thread>,
+struct ThreadList<S> {
+    threads: Vec<Thread<S>>,
 }
 
-impl ThreadList {
+impl<S> ThreadList<S> {
     /// Create a new `ThreadList` with a specified capacity
-    fn new(cap: usize) -> ThreadList {
+    fn new(cap: usize) -> ThreadList<S> {
         ThreadList {
             threads: Vec::with_capacity(cap),
         }
     }
 
-    /// Add a new `Thread` with the specified instruction pointer, and the given list of saved
-    /// locations. If `pc` points to a `Jump`, `Split`, `JSplit`, or `Save` instruction, calls
-    /// `add_thread` recursively, so that the active `ThreadList` never contains pointers to those
-    /// instructions.
+    /// Add a new `Thread` with the specified instruction pointer, and the
+    /// given state. If `pc` points to a `Jump`, `Split`, `JSplit`, or `UpdateState`
+    /// instruction, calls `add_thread` recursively, so that the active
+    /// `ThreadList` never contains pointers to those instructions.
     fn add_thread<T: Token>(
         &mut self,
-        pc: InstrPtr,
-        in_idx: usize,
-        prog: &Program<T>,
-        mut saved: SaveList,
-    ) {
+        program_state: ProgramState<'_, T>,
+        prog: &Program<T, S>,
+        mut state: S,
+    ) where
+        S: State<T>,
+    {
         // don't check if there's already a thread with this `pc` on the list, because we want to
         // keep alternate paths alive, in case they produce different submatch values.
         use self::Instr::*;
-        match prog[pc] {
+        match prog[program_state.instruction_ptr] {
             Split(split) => {
                 // call `add_thread` recursively
                 // branch with no jump is higher priority
-                // clone the `saved` vector so we can use it again in the second branch
-                self.add_thread(pc + 1, in_idx, prog, saved.clone());
-                self.add_thread(split, in_idx, prog, saved);
+                // clone the `state` so we can use it again in the second branch
+                self.add_thread(program_state.increment_ip(), prog, state.clone());
+                self.add_thread(program_state.with_ip(split), prog, state);
             }
             JSplit(split) => {
                 // call `add_thread` recursively
                 // branch with jump is higher priority
-                // clone the `saved` vector so we can use it again in the second branch
-                self.add_thread(split, in_idx, prog, saved.clone());
-                self.add_thread(pc + 1, in_idx, prog, saved);
+                // clone the `state` so we can use it again in the second branch
+                self.add_thread(program_state.with_ip(split), prog, state.clone());
+                self.add_thread(program_state.increment_ip(), prog, state);
             }
             Jump(jump) => {
                 // call `add_thread` recursively
                 // jump to specified pc
-                self.add_thread(jump, in_idx, prog, saved);
+                self.add_thread(program_state.with_ip(jump), prog, state);
             }
-            Save(idx) => {
-                // save index
-                saved[idx] = Some(in_idx);
+            UpdateState(ref update) => {
+                // update state
+                state.update(update, program_state);
                 // and recursively add next instruction
-                self.add_thread(pc + 1, in_idx, prog, saved);
+                self.add_thread(program_state.increment_ip(), prog, state);
             }
             Reject => {} // do nothing, this thread is dead
             Token(_) | Map(_) | Set(_) | Any | WordBoundary | Match => {
                 // push a new thread with the given pc
-                self.threads.push(Thread::new(pc, saved));
+                self.threads
+                    .push(Thread::new(program_state.instruction_ptr, state));
             }
         }
     }
 }
 
-impl<'a> IntoIterator for &'a mut ThreadList {
-    type Item = Thread;
-    type IntoIter = ::std::vec::Drain<'a, Thread>;
+impl<'a, S> IntoIterator for &'a mut ThreadList<S> {
+    type Item = Thread<S>;
+    type IntoIter = ::std::vec::Drain<'a, Thread<S>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.threads.drain(..)
     }
 }
 
-/// A list of saved locations, which may be absent
-pub type SaveList = Vec<Option<usize>>;
-
 /// A program for the VM
-#[derive(Debug, PartialEq)]
-pub struct Program<T: Token> {
+pub struct Program<T: Token, S: State<T>> {
     /// List of instructions. `InstrPtr`s are indexed into this vector
-    prog: Vec<Instr<T>>,
-    /// Number of save slots. Generally _2n + 2_, where _n_ is the number of capturing groups,
-    /// since the first two slots are used for the entire match.
-    num_slots: usize,
+    prog: Vec<Instr<T, S>>,
+    /// Initializer for state.
+    state_init: S::Init,
 }
 
-impl<T: Token> Program<T> {
-    pub fn new(prog: Vec<Instr<T>>, num_slots: usize) -> Program<T> {
-        Program { prog, num_slots }
+impl<T: Token, S: State<T>> Program<T, S> {
+    pub fn new(prog: Vec<Instr<T, S>>, state_init: S::Init) -> Program<T, S> {
+        Program { prog, state_init }
     }
 
-    /// Executes the program. Returns a vector of matches found. For each match, the positions of
-    /// all the save locations are stored in a vector
-    pub fn exec<U: Borrow<T>>(&self, input: impl IntoSearcher<U>) -> Vec<SaveList> {
+    /// Executes the program. Returns a vector of matches found. For each
+    /// match, the final state for each match is returned.
+    ///
+    /// With the `SaveList` state, this means the location of each of the saved
+    /// locations in the match.
+    pub fn exec<U: Borrow<T>>(&self, input: impl IntoSearcher<U>) -> Vec<S> {
         self.exec_searcher(input.into_searcher())
     }
 
-    /// Executes the program. Returns a vector of matches found. For each match, the positions of
-    /// all the save locations are stored in a vector
-    pub fn exec_iter<U: Borrow<T>>(&self, input: impl IntoIterator<Item = U>) -> Vec<SaveList> {
+    /// Executes the program. Returns a vector of matches found. For each
+    /// match, the final state for each match is returned.
+    ///
+    /// With the `SaveList` state, this means the location of each of the saved
+    /// locations in the match.
+    pub fn exec_iter<U: Borrow<T>>(&self, input: impl IntoIterator<Item = U>) -> Vec<S> {
         self.exec_searcher(crate::searcher::IterSearcher::new(input.into_iter()))
     }
 
-    fn exec_searcher<U: Borrow<T>>(&self, mut searcher: impl Searcher<Item = U>) -> Vec<SaveList> {
+    fn exec_searcher<U: Borrow<T>>(&self, mut searcher: impl Searcher<Item = U>) -> Vec<S> {
         // initialize thread lists. The number of threads should be limited by the length of the
         // program (since each instruction either ends a thread (in the case of a `Match` or a
         // failed `Token` instruction), continues an existing thread (in the case of a successful
-        // `Token`, `Jump`, or `Save` instruction), or spawns a new thread (in the case of a
+        // `Token`, `Jump`, or `UpdateState` instruction), or spawns a new thread (in the case of a
         // `Split` or `JSplit` instruction))
         let mut curr = ThreadList::new(self.prog.len());
         let mut next = ThreadList::new(self.prog.len());
 
-        let mut saves = Vec::new();
+        let mut states = Vec::new();
 
         // start initial thread at start instruction
-        curr.add_thread(0, 0, self, vec![None; self.num_slots]);
+        curr.add_thread(
+            ProgramState {
+                instruction_ptr: 0,
+                token_index: 0,
+                token: None,
+            },
+            self,
+            S::init(&self.state_init),
+        );
 
         // set initial word flag
         let mut word = false;
@@ -188,53 +247,64 @@ impl<T: Token> Program<T> {
             let new_word = tok_i.is_word();
             let word_boundary = new_word ^ word;
             word = new_word;
+
             // iterate over active threads, draining the list so we can reuse it without
             // reallocating
             for th in &mut curr {
+                let next_program_state = ProgramState {
+                    instruction_ptr: th.pc + 1,
+                    token_index: idx,
+                    token: Some(tok_i),
+                };
                 use self::Instr::*;
                 match self[th.pc] {
                     Token(ref token) => {
                         // check if token matches
                         if tok_i == token {
-                            // increment thread pc, passing along next input index, and saved
-                            // positions
-                            next.add_thread(th.pc + 1, idx, self, th.saved);
+                            // increment thread pc, passing along next input index, and state
+                            next.add_thread(next_program_state, self, th.state);
                         }
                     }
                     Set(ref set) => {
                         // check if token in set
                         if set.contains(tok_i) {
-                            // increment thread pc, passing along next input index, and saved
-                            // positions
-                            next.add_thread(th.pc + 1, idx, self, th.saved);
+                            // increment thread pc, passing along next input index, and state
+                            next.add_thread(next_program_state, self, th.state);
                         }
                     }
                     Map(ref map) => {
                         // get the corresponding pc, or default to incrementing
                         next.add_thread(
-                            map.get(tok_i).cloned().unwrap_or(th.pc + 1),
-                            idx,
+                            next_program_state.optional_with_ip(map.get(tok_i).cloned()),
                             self,
-                            th.saved,
+                            th.state,
                         );
                     }
                     Any => {
                         // always matches
-                        next.add_thread(th.pc + 1, idx, self, th.saved);
+                        next.add_thread(next_program_state, self, th.state);
                     }
                     WordBoundary => {
-                        // check if word boundary
+                        // check if word boundary, don't consume character
                         if word_boundary {
-                            next.add_thread(th.pc + 1, i, self, th.saved);
+                            next.add_thread(
+                                ProgramState {
+                                    instruction_ptr: th.pc + 1,
+                                    token_index: i,
+                                    token: Some(tok_i),
+                                },
+                                self,
+                                th.state,
+                            );
                         }
                     }
                     Match => {
-                        // add the saved locations to the final list
-                        saves.push(th.saved);
+                        // add the state to the final list
+                        states.push(th.state);
                     }
                     // These instructions are handled in add_thread, so the current thread should
                     // never point to one of them
-                    Split(_) | JSplit(_) | Jump(_) | Save(_) | Reject => {
+                    Split(_) | JSplit(_) | Jump(_) | UpdateState(_) | Reject => {
                         unreachable!();
                     }
                 }
@@ -253,11 +323,19 @@ impl<T: Token> Program<T> {
                 WordBoundary => {
                     // check if last token was a word token
                     if word {
-                        next.add_thread(th.pc + 1, i, self, th.saved);
+                        next.add_thread(
+                            ProgramState {
+                                instruction_ptr: th.pc + 1,
+                                token_index: i,
+                                token: None,
+                            },
+                            self,
+                            th.state,
+                        );
                     }
                 }
                 Match => {
-                    saves.push(th.saved);
+                    states.push(th.state);
                 }
                 // anything else is a failed match
                 _ => {}
@@ -268,19 +346,58 @@ impl<T: Token> Program<T> {
         for th in &mut next {
             // anything else is a failed match
             if let Instr::Match = self[th.pc] {
-                saves.push(th.saved);
+                states.push(th.state);
             }
         }
 
-        // return the list of saved locations
-        saves
+        // return the list of states
+        states
     }
 }
 
-impl<T: Token> Index<InstrPtr> for Program<T> {
-    type Output = Instr<T>;
+impl<T: Token, S: State<T>> Index<InstrPtr> for Program<T, S> {
+    type Output = Instr<T, S>;
 
-    fn index(&self, idx: InstrPtr) -> &Instr<T> {
+    fn index(&self, idx: InstrPtr) -> &Instr<T, S> {
         self.prog.index(idx)
+    }
+}
+
+#[cfg(test)]
+impl<T, S> PartialEq for Program<T, S>
+where
+    T: Token,
+    S: State<T>,
+    S::Update: PartialEq,
+    S::Init: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.state_init == other.state_init && self.prog == other.prog
+    }
+}
+
+impl<T, S> Debug for Program<T, S>
+where
+    T: Token,
+    S: State<T>,
+    S::Update: Debug,
+    S::Init: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "Program {{")?;
+        writeln!(f, "  state_init: {:?},", self.state_init)?;
+        if self.prog.is_empty() {
+            writeln!(f, "  prog: [],")?;
+        } else {
+            // not necessarily the fastest way to do this, but the time it
+            // takes is negligible, and it works
+            let max_len = (self.prog.len() - 1).to_string().len();
+            writeln!(f, "  prog: [")?;
+            for (idx, instr) in self.prog.iter().enumerate() {
+                writeln!(f, "    {:>1$}: {2:?},", idx, max_len, instr)?;
+            }
+            writeln!(f, "  ],")?;
+        }
+        write!(f, "}}")
     }
 }

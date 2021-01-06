@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::program;
+use crate::state::SaveList;
 use crate::token::Token;
 
 /// A regular expression
@@ -28,14 +29,14 @@ pub enum Regex<T: Token> {
 
 impl<T: Token> Regex<T> {
     /// Compiles a regular expression into a program to be executed.
-    pub fn compile(self) -> program::Program<T> {
+    pub fn compile(self) -> program::Program<T, SaveList> {
         use crate::program::Instr::*;
         // first, match /.*?/ to find earliest start of match, and save match point
-        let mut v = vec![JSplit(3), Any, Jump(0), Save(0)];
+        let mut v = vec![JSplit(3), Any, Jump(0), UpdateState(0)];
         let mut num_captures = 0;
         self.compile_partial(&mut v, &mut num_captures);
         // save end of match
-        v.push(Save(1));
+        v.push(UpdateState(1));
         // finish
         v.push(Match);
 
@@ -43,7 +44,7 @@ impl<T: Token> Regex<T> {
         program::Program::new(v, 2 + num_captures * 2)
     }
 
-    fn compile_partial(self, v: &mut Vec<program::Instr<T>>, num_captures: &mut usize) {
+    fn compile_partial(self, v: &mut Vec<program::Instr<T, SaveList>>, num_captures: &mut usize) {
         use crate::program::Instr::*;
         match self {
             Regex::Empty => {}
@@ -118,11 +119,11 @@ impl<T: Token> Regex<T> {
                 // save current value of `num_captures`, incase `e` has any captures
                 let n = *num_captures;
                 // save begining of capture
-                v.push(Save(n * 2));
+                v.push(UpdateState(n * 2));
                 // match `e`
                 e.compile_partial(v, num_captures);
                 // save end of capture
-                v.push(Save(n * 2 + 1));
+                v.push(UpdateState(n * 2 + 1));
             }
             Regex::Concat(es) => {
                 for e in es {
