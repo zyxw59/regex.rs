@@ -1,39 +1,37 @@
 #[macro_export]
 macro_rules! program {
-    ($($(:$label:ident)? $instr:ident $(($($args:tt)*))?,)*) => {{
+    ($($(:$label:ident)? $instr:ident $(($($args:tt)*))?),* $(,)? $(; $init:expr)?) => {
+        program![<_, _> $($(:$label)? $instr $(($($args)*))?),*]
+    };
+    (<$tok:ty, $state:ty> $($(:$label:ident)? $instr:ident $(($($args:tt)*))?),* $(,)? $(; $init:expr)?) => {{
         let mut count = 0;
         $(
             $(let $label = count;)?
             count += 1;
         )*
-        let mut prog = Vec::with_capacity(count);
-        let mut max_slot = 0;
+        let mut prog = Vec::<$crate::program::Instr<$tok, $state>>::with_capacity(count);
         $(
-            let instr = $crate::instruction!($instr $(($($args)*))?, max_slot);
+            let instr = $crate::instruction!($instr $(($($args)*))?);
             prog.push(instr);
         )*
-        $crate::program::Program::<_, $crate::state::SaveList>::new(prog, max_slot + 1)
+        $crate::program::Program::new(prog, {$($init)?})
     }};
 }
 
 #[macro_export]
 macro_rules! instruction {
-    (Map($($tok:expr => $label:expr),*), $max_slot:ident) => {
+    (Map($($tok:expr => $label:expr),*)) => {
         $crate::program::Instr::Map([$(($tok, $label)),*].into_iter().collect())
     };
-    (Set($($tok:expr),*), $max_slot:ident) => {
+    (Set($($tok:expr),*)) => {
         $crate::program::Instr::Set([$($tok),*].into_iter().collect())
     };
-    (UpdateState($slot:expr), $max_slot:ident) => {{
-        $max_slot = $max_slot.max($slot);
-        $crate::program::Instr::UpdateState($slot)
-    }};
     // Any, WordBoundary, Reject, Match
-    ($instr:tt, $max_slot:ident) => {
+    ($instr:tt) => {
         $crate::program::Instr::$instr
     };
-    // Token, Split, JSplit, Jump
-    ($instr:tt ($arg:expr), $max_slot:ident) => {
+    // Token, Split, JSplit, Jump, UpdateState
+    ($instr:tt ($arg:expr)) => {
         $crate::program::Instr::$instr($arg)
     };
 }
@@ -43,7 +41,7 @@ macro_rules! instruction {
 fn program() {
     use crate::program::Instr::*;
 
-    let program_macro = program![
+    let program_macro = program![<char, crate::state::SaveList>
         // /(ab?)(b?c)\b/
         // match .*? before start of match
         :l0 JSplit(l1),
@@ -71,6 +69,7 @@ fn program() {
         // end of match
         UpdateState(1),
         Match,
+        ; 6
     ];
 
     let prog = vec![
