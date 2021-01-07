@@ -116,3 +116,110 @@ impl<T: Eq + Hash> PartialEq for SetOrFn<T> {
         }
     }
 }
+
+#[macro_export]
+macro_rules! map {
+    ($($key:expr => $value:expr),*$(,)?) => {
+        {
+            let _cap = $crate::__count!($($key),*);
+            let mut _map = std::collections::HashMap::with_capacity(_cap);
+            $(
+                _map.insert($key, $value);
+            )*
+            _map
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! map_or_fn {
+    (fn $func:expr; $name:expr) => {
+        $crate::token::MapOrFn::Fn {
+            func: Box::new($func),
+            name: $name.into(),
+        }
+    };
+    (fn $func:expr) => {
+        $crate::map_or_fn!(fn $func; stringify!($func))
+    };
+    ($($key:expr => $value:expr),*$(,)?) => {
+        $crate::token::MapOrFn::Map($crate::map!($($key => $value),*))
+    };
+}
+
+#[macro_export]
+macro_rules! set {
+    ($($elem:expr),*$(,)?) => {
+        {
+            let _cap = $crate::_count!($($elem),*);
+            let mut _set = std::collections::HashSet::with_capacity(_cap);
+            $(
+                _set.insert($elem);
+            )*
+            _set
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! set_or_fn {
+    (fn $func:expr; $name:expr) => {
+        $crate::token::SetOrFn::Fn {
+            func: Box::new($func),
+            name: $name.into(),
+        }
+    };
+    (fn $func:expr) => {
+        $crate::set_or_fn!(fn $func; stringify!($func))
+    };
+    ($($elem:expr),*$(,)?) => {
+        $crate::token::SetOrFn::Set($crate::set!($($elem),*))
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __count {
+    (@single $($x:tt)*) => (());
+    ($($rest:expr),*) => (<[()]>::len(&[$($crate::__count!(@single $rest)),*]));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn macros() {
+        let func_1 = set_or_fn!(fn char::is_ascii);
+        let func_2: super::SetOrFn<char> = set_or_fn!(fn |_| true);
+        let func_3: super::SetOrFn<char> = set_or_fn!(fn |_| true; "any");
+        let map_1 = map_or_fn!('a' => 1, 'b' => 2);
+
+        assert_eq!(
+            func_1,
+            super::SetOrFn::Fn {
+                func: Box::new(char::is_ascii),
+                name: "char::is_ascii".into()
+            }
+        );
+
+        assert_eq!(
+            func_2,
+            super::SetOrFn::Fn {
+                func: Box::new(|_| true),
+                name: "|_| true".into()
+            }
+        );
+
+        assert_eq!(
+            func_3,
+            super::SetOrFn::Fn {
+                func: Box::new(|_| true),
+                name: "any".into()
+            }
+        );
+
+        assert_eq!(
+            map_1,
+            super::MapOrFn::Map([('a', 1), ('b', 2)].iter().cloned().collect()),
+        );
+    }
+}
