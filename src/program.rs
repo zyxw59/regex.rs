@@ -4,6 +4,8 @@ use std::fmt::Debug;
 use std::mem;
 use std::ops::Index;
 
+use indexmap::IndexSet;
+
 use crate::searcher::{IntoSearcher, Searcher};
 use crate::state::{ProgramState, State};
 use crate::token::Token;
@@ -109,14 +111,15 @@ impl<S> Thread<S> {
 /// A list of threads
 #[derive(Debug)]
 struct ThreadList<S> {
-    threads: Vec<Thread<S>>,
+    // uses `IndexSet` to maintain order while also pruning duplicate threads
+    threads: IndexSet<Thread<S>>,
 }
 
 impl<S> ThreadList<S> {
     /// Create a new `ThreadList` with a specified capacity
-    fn new(cap: usize) -> ThreadList<S> {
+    fn with_capacity(cap: usize) -> ThreadList<S> {
         ThreadList {
-            threads: Vec::with_capacity(cap),
+            threads: IndexSet::with_capacity(cap),
         }
     }
 
@@ -165,7 +168,7 @@ impl<S> ThreadList<S> {
             Token(_) | Map(_) | Set(_) | Any | WordBoundary | Match => {
                 // push a new thread with the given pc
                 self.threads
-                    .push(Thread::new(program_state.instruction_ptr, state));
+                    .insert(Thread::new(program_state.instruction_ptr, state));
             }
         }
     }
@@ -173,7 +176,7 @@ impl<S> ThreadList<S> {
 
 impl<'a, S> IntoIterator for &'a mut ThreadList<S> {
     type Item = Thread<S>;
-    type IntoIter = ::std::vec::Drain<'a, Thread<S>>;
+    type IntoIter = indexmap::set::Drain<'a, Thread<S>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.threads.drain(..)
@@ -217,8 +220,8 @@ impl<T: Token, S: State<T>> Program<T, S> {
         // failed `Token` instruction), continues an existing thread (in the case of a successful
         // `Token`, `Jump`, or `UpdateState` instruction), or spawns a new thread (in the case of a
         // `Split` or `JSplit` instruction))
-        let mut curr = ThreadList::new(self.prog.len());
-        let mut next = ThreadList::new(self.prog.len());
+        let mut curr = ThreadList::with_capacity(self.prog.len());
+        let mut next = ThreadList::with_capacity(self.prog.len());
 
         let mut states = Vec::new();
 

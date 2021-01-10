@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! program {
     ($($(:$label:ident)? $instr:ident $(($($args:tt)*))?),* $(,)? $(; $init:expr)?) => {
-        program![<_, _> $($(:$label)? $instr $(($($args)*))?),*]
+        $crate::program![<_, _> $($(:$label)? $instr $(($($args)*))?),* $(; $init)?]
     };
     (<$tok:ty, $state:ty> $($(:$label:ident)? $instr:ident $(($($args:tt)*))?),* $(,)? $(; $init:expr)?) => {{
         let mut count = 0;

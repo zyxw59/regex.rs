@@ -91,6 +91,7 @@ mod tests {
             // end of match
             UpdateState(1),
             Match,
+            ; 8 // number of save slots
         ];
         // the search string contains characters with 1, 2, 3, and 4 byte representations,
         // respectively (U+0024, U+00A2, U+20AC, U+10348)
