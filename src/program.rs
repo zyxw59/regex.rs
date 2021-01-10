@@ -1,7 +1,9 @@
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::ops::Index;
 
+use crate::searcher::{IntoSearcher, Searcher};
 use crate::token::Token;
 
 /// Type for indexing into a program
@@ -148,7 +150,17 @@ impl<T: Token> Program<T> {
 
     /// Executes the program. Returns a vector of matches found. For each match, the positions of
     /// all the save locations are stored in a vector
-    pub fn exec(&self, input: impl IntoIterator<Item = T>) -> Vec<SaveList> {
+    pub fn exec<U: Borrow<T>>(&self, input: impl IntoSearcher<U>) -> Vec<SaveList> {
+        self.exec_searcher(input.into_searcher())
+    }
+
+    /// Executes the program. Returns a vector of matches found. For each match, the positions of
+    /// all the save locations are stored in a vector
+    pub fn exec_iter<U: Borrow<T>>(&self, input: impl IntoIterator<Item = U>) -> Vec<SaveList> {
+        self.exec_searcher(crate::searcher::IterSearcher::new(input.into_iter()))
+    }
+
+    fn exec_searcher<U: Borrow<T>>(&self, mut searcher: impl Searcher<Item = U>) -> Vec<SaveList> {
         // initialize thread lists. The number of threads should be limited by the length of the
         // program (since each instruction either ends a thread (in the case of a `Match` or a
         // failed `Token` instruction), continues an existing thread (in the case of a successful
@@ -170,7 +182,8 @@ impl<T: Token> Program<T> {
         let mut i = 0;
 
         // iterate over tokens of input string
-        for ref tok_i in input {
+        while let (idx, Some(tok_i)) = searcher.next() {
+            let tok_i = tok_i.borrow();
             // check if word boundary
             let new_word = tok_i.is_word();
             let word_boundary = new_word ^ word;
@@ -185,7 +198,7 @@ impl<T: Token> Program<T> {
                         if tok_i == token {
                             // increment thread pc, passing along next input index, and saved
                             // positions
-                            next.add_thread(th.pc + 1, i + 1, self, th.saved);
+                            next.add_thread(th.pc + 1, idx, self, th.saved);
                         }
                     }
                     Set(ref set) => {
@@ -193,21 +206,21 @@ impl<T: Token> Program<T> {
                         if set.contains(tok_i) {
                             // increment thread pc, passing along next input index, and saved
                             // positions
-                            next.add_thread(th.pc + 1, i + 1, self, th.saved);
+                            next.add_thread(th.pc + 1, idx, self, th.saved);
                         }
                     }
                     Map(ref map) => {
                         // get the corresponding pc, or default to incrementing
                         next.add_thread(
                             map.get(tok_i).cloned().unwrap_or(th.pc + 1),
-                            i + 1,
+                            idx,
                             self,
                             th.saved,
                         );
                     }
                     Any => {
                         // always matches
-                        next.add_thread(th.pc + 1, i + 1, self, th.saved);
+                        next.add_thread(th.pc + 1, idx, self, th.saved);
                     }
                     WordBoundary => {
                         // check if word boundary
@@ -230,7 +243,7 @@ impl<T: Token> Program<T> {
             // the next iteration
             mem::swap(&mut curr, &mut next);
             // increment`i`
-            i += 1;
+            i = idx;
         }
 
         // now iterate over remaining threads, to check for pending word boundary instructions
